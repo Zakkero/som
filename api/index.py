@@ -5,9 +5,9 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 # ─── Настройки из переменных окружения Vercel ───
-BOT_TOKEN  = os.environ.get(8988219440:AAFl0ZC2jZvUcfY71gwqFG1mePke0CpSf60)
-ADMIN_ID   = os.environ.get(1935742032)    # твой Telegram user_id (число)
-CHANNEL_ID = os.environ.get(-1003907328618)  # @имя_канала или -100xxxx
+BOT_TOKEN  = os.environ.get("8988219440:AAFl0ZC2jZvUcfY71gwqFG1mePke0CpSf60")
+ADMIN_ID   = os.environ.get("1935742032")    # твой Telegram user_id (число)
+CHANNEL_ID = os.environ.get("-1003907328618")  # @имя_канала или -100xxxx
 
 API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 

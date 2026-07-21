@@ -1,4 +1,4 @@
-#гайка
+#гайка_бомба
 from http.server import BaseHTTPRequestHandler
 import json
 import os

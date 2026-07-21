@@ -1,43 +1,47 @@
-#тест
+from http.server import BaseHTTPRequestHandler
 import json
 import os
+import sys
 
-def handler(req, res):
-    # 1. Обработка GET-запросов (просто проверка, что бот жив)
-    if req.method == 'GET':
-        res.status(200).send('Bot is alive! Send me a message in Telegram.')
-        return
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'Bot is alive! Send me a message in Telegram.')
 
-    # 2. Обработка POST-запросов от Telegram
-    if req.method == 'POST':
+    def do_POST(self):
         try:
-            # Telegram присылает данные в req.body
-            body = req.body
-            if isinstance(body, str):
-                data = json.loads(body)
-            else:
-                data = body
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            
+            if not body:
+                self._respond(200)
+                return
 
-            # Если пришло сообщение
+            data = json.loads(body)
+            
             if 'message' in data:
                 chat_id = data['message']['chat']['id']
                 user_id = data['message']['from']['id']
                 
-                # Записываем успешный приём в логи Vercel
-                print(f"✅ SUCCESS: Received message from user {user_id} in chat {chat_id}")
+                print(f"✅ SUCCESS: Received message from user {user_id} in chat {chat_id}", file=sys.stderr)
                 
-                # Проверяем переменные окружения
                 token = os.environ.get("BOT_TOKEN", "MISSING")
                 admin = os.environ.get("ADMIN_ID", "MISSING")
                 
-                # Показываем в логах начало токена (для безопасности) и ID
                 token_preview = token[:15] + "..." if token != "MISSING" else "NONE"
-                print(f"🔍 DEBUG VARS: Token={token_preview}, Admin={admin}")
+                print(f"🔍 DEBUG VARS: Token={token_preview}, Admin={admin}", file=sys.stderr)
 
-            # Всегда возвращаем 200 OK, чтобы Telegram не думал, что произошла ошибка
-            res.status(200).send('OK')
+            self._respond(200)
             
         except Exception as e:
-            # Если всё-таки произошла ошибка, мы запишем её в логи, но всё равно вернём 200
-            print(f"❌ PYTHON EXCEPTION: {str(e)}")
-            res.status(200).send('OK')
+            print(f"❌ PYTHON EXCEPTION: {str(e)}", file=sys.stderr)
+            self._respond(200)
+
+    def _respond(self, code):
+        self.send_response(code)
+        self.end_headers()
+        self.wfile.write(b'OK')
+
+    def log_message(self, format, *args):
+        pass

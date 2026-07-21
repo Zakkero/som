@@ -3,9 +3,8 @@ import json
 import os
 import requests
 from datetime import datetime, timezone, timedelta
-from upstash_redis import Redis
 
-# ─── Настройки ───
+# ─── Настройки из переменных окружения ───
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 MAIN_ADMIN_ID = os.environ.get("ADMIN_ID")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
@@ -23,18 +22,27 @@ except Exception as e:
     print(f"KV connection error: {e}")
     redis = None
 
+
+# ═══════════════════════════════════════════════════
+#  Работа с базой данных (админы и настройки)
+# ═══════════════════════════════════════════════════
 def get_admins():
     """Возвращает список ID админов как список строк"""
     if not redis:
         return [str(MAIN_ADMIN_ID)]
-    admins_str = redis.get("bot_admins")
-    if not admins_str:
-        redis.set("bot_admins", str(MAIN_ADMIN_ID))
+    try:
+        admins_str = redis.get("bot_admins")
+        if not admins_str:
+            redis.set("bot_admins", str(MAIN_ADMIN_ID))
+            return [str(MAIN_ADMIN_ID)]
+        return admins_str.split(",")
+    except Exception:
         return [str(MAIN_ADMIN_ID)]
-    return admins_str.split(",")
+
 
 def is_admin(user_id):
     return str(user_id) in get_admins()
+
 
 def _send_msg(chat_id, text, reply_markup=None):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
@@ -77,61 +85,122 @@ class handler(BaseHTTPRequestHandler):
 
 
 # ═══════════════════════════════════════════════════
-#  1) Пришло сообщение
+#  1) Пришло сообщение от пользователя
 # ═══════════════════════════════════════════════════
 def _handle_message(msg):
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
-    text = msg.get("text", "").strip()
+    text = (msg.get("text") or "").strip()
 
-    # ── БЛОК АДМИНА ──
+    # ── БЛОК АДМИНА: команды управления ──
     if is_admin(user_id):
+        # Добавление админа
         if text.startswith("/add_admin "):
-            new_admin = text.split("/add_admin ")[1].strip()
+            new_admin = text.split("/add_admin ", 1)[1].strip()
+            if not new_admin.isdigit():
+                _send_msg(chat_id, "❌ ID должен быть числом. Пример: `/add_admin 123456789`")
+                return
             admins = get_admins()
             if new_admin not in admins:
                 admins.append(new_admin)
-                redis.set("bot_admins", ",".join(admins))
+                if redis:
+                    try:
+                        redis.set("bot_admins", ",".join(admins))
+                    except Exception:
+                        pass
                 _send_msg(chat_id, f"✅ Админ `{new_admin}` успешно добавлен!")
             else:
                 _send_msg(chat_id, "⚠️ Этот пользователь уже в списке админов.")
             return
 
+        # Удаление админа
         if text.startswith("/remove_admin "):
-            rem_admin = text.split("/remove_admin ")[1].strip()
+            rem_admin = text.split("/remove_admin ", 1)[1].strip()
             if rem_admin == str(MAIN_ADMIN_ID):
                 _send_msg(chat_id, "❌ Нельзя удалить главного админа!")
                 return
             admins = get_admins()
             if rem_admin in admins:
                 admins.remove(rem_admin)
-                redis.set("bot_admins", ",".join(admins))
+                if redis:
+                    try:
+                        redis.set("bot_admins", ",".join(admins))
+                    except Exception:
+                        pass
                 _send_msg(chat_id, f"🗑 Админ `{rem_admin}` удален.")
             else:
                 _send_msg(chat_id, "⚠️ Пользователь не найден в списке админов.")
             return
 
+        # Меню настроек
         if text == "/settings":
-            auto_accept = redis.get("auto_accept") == "true" if redis else False
+            auto_accept = False
+            if redis:
+                try:
+                    auto_accept = redis.get("auto_accept") == "true"
+                except Exception:
+                    auto_accept = False
             status = "ВКЛ ✅" if auto_accept else "ВЫКЛ ❌"
-            kb = {"inline_keyboard": [[{"text": f"🔄 Автоприём: {status}", "callback_data": "toggle_auto"}]]}
-            _send_msg(chat_id, f"⚙️ *Настройки бота*\n\nАвтоприём: *{status}*\n\nКоманды:\n`/add_admin ID`\n`/remove_admin ID`", reply_markup=kb)
+            kb = {
+                "inline_keyboard": [[
+                    {"text": f"🔄 Автоприём: {status}", "callback_data": "toggle_auto"}
+                ]]
+            }
+            _send_msg(
+                chat_id,
+                f"⚙️ *Настройки бота*\n\n"
+                f"Автоприём: *{status}*\n\n"
+                f"Команды:\n"
+                f"`/add_admin ID` — добавить админа\n"
+                f"`/remove_admin ID` — удалить админа\n"
+                f"`/list_admins` — список админов",
+                reply_markup=kb
+            )
+            return
+
+        # Список админов
+        if text == "/list_admins":
+            admins = get_admins()
+            main_mark = " 👑" if str(MAIN_ADMIN_ID) in admins else ""
+            admin_list = "\n".join([f"• `{a}`" + (" 👑" if a == str(MAIN_ADMIN_ID) else "") for a in admins])
+            _send_msg(chat_id, f"👥 *Список админов:*\n\n{admin_list}\n\n👑 — главный админ")
+            return
+
+        # Помощь
+        if text == "/start" or text == "/help":
+            _send_msg(
+                chat_id,
+                "👋 *Привет, админ!*\n\n"
+                "Доступные команды:\n"
+                "`/settings` — настройки бота\n"
+                "`/add_admin ID` — добавить админа\n"
+                "`/remove_admin ID` — удалить админа\n"
+                "`/list_admins` — список админов\n"
+                "`/help` — эта справка"
+            )
             return
 
     # ── БЛОК ОБЫЧНОГО ПОЛЬЗОВАТЕЛЯ ──
-    if str(chat_id) == str(MAIN_ADMIN_ID):
-        return  # Игнорируем личные сообщения самого главного админа как "пользователя"
+    # Игнорируем сообщения от админов (они не должны публиковаться)
+    if is_admin(user_id):
+        return
 
     user = msg.get("from", {})
     full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "Не указано"
     uname = user.get("username", "нет")
     dt = datetime.fromtimestamp(msg["date"], tz=TZ)
-    
+
     msg_text = msg.get("text") or msg.get("caption") or "[Медиа без подписи]"
     msg_text_lower = msg_text.lower()
 
     # Проверяем автоприём и триггеры
-    auto_accept = redis.get("auto_accept") == "true" if redis else False
+    auto_accept = False
+    if redis:
+        try:
+            auto_accept = redis.get("auto_accept") == "true"
+        except Exception:
+            auto_accept = False
+
     has_trigger = any(trigger in msg_text_lower for trigger in TRIGGER_WORDS)
 
     if auto_accept and not has_trigger:
@@ -141,13 +210,17 @@ def _handle_message(msg):
             "from_chat_id": chat_id,
             "message_id": msg["message_id"],
         })
-        
+
         # Уведомляем всех админов
-        admin_text = f"✅ *Автоприём:* Сообщение опубликовано в канале.\n\n👤 {full_name} (@{uname})\n💬 {msg_text}"
+        admin_text = (
+            f"✅ *Автоприём:* Сообщение опубликовано в канале.\n\n"
+            f"👤 {full_name} (@{uname})\n"
+            f"💬 {msg_text}"
+        )
         for admin_id in get_admins():
             _send_msg(admin_id, admin_text)
     else:
-        # ⏸ РУЧНОЕ ОДОБРЕНИЕ (стандарт или сработал триггер)
+        # ⏸ РУЧНОЕ ОДОБРЕНИЕ
         reason = " ⚠️ *(подозрительные слова)*" if has_trigger else ""
         admin_text = (
             f"📨 *Новое сообщение!*{reason}\n\n"
@@ -167,7 +240,7 @@ def _handle_message(msg):
 
 
 # ═══════════════════════════════════════════════════
-#  2) Админ нажал кнопку
+#  2) Админ нажал инлайн-кнопку
 # ═══════════════════════════════════════════════════
 def _handle_callback(cb):
     data = cb["data"]
@@ -176,27 +249,56 @@ def _handle_callback(cb):
     admin_chat = admin_msg["chat"]["id"]
     admin_mid = admin_msg["message_id"]
 
-    # Переключение автоприёма
+    # ── Переключение автоприёма ──
     if data == "toggle_auto":
-        current = redis.get("auto_accept") == "true" if redis else False
+        current = False
+        if redis:
+            try:
+                current = redis.get("auto_accept") == "true"
+            except Exception:
+                current = False
+
         new_state = "false" if current else "true"
-        redis.set("auto_accept", new_state)
-        
+        if redis:
+            try:
+                redis.set("auto_accept", new_state)
+            except Exception:
+                pass
+
         status = "ВКЛ ✅" if new_state == "true" else "ВЫКЛ ❌"
-        kb = {"inline_keyboard": [[{"text": f"🔄 Автоприём: {status}", "callback_data": "toggle_auto"}]]}
-        
+        kb = {
+            "inline_keyboard": [[
+                {"text": f"🔄 Автоприём: {status}", "callback_data": "toggle_auto"}
+            ]]
+        }
+
         requests.post(f"{API}/editMessageText", json={
             "chat_id": admin_chat,
             "message_id": admin_mid,
-            "text": f"⚙️ *Настройки бота*\n\nАвтоприём: *{status}*\n\nКоманды:\n`/add_admin ID`\n`/remove_admin ID`",
+            "text": (
+                f"⚙️ *Настройки бота*\n\n"
+                f"Автоприём: *{status}*\n\n"
+                f"Команды:\n"
+                f"`/add_admin ID` — добавить админа\n"
+                f"`/remove_admin ID` — удалить админа\n"
+                f"`/list_admins` — список админов"
+            ),
             "parse_mode": "Markdown",
             "reply_markup": kb
         })
-        requests.post(f"{API}/answerCallbackQuery", json={"callback_query_id": cb_id, "text": f"Автоприём {status}"})
+        requests.post(f"{API}/answerCallbackQuery", json={
+            "callback_query_id": cb_id,
+            "text": f"Автоприём {status}"
+        })
         return
 
-    # Одобрение / Отклонение
-    action, orig_chat, orig_mid = data.split(":")
+    # ── Одобрение / Отклонение сообщения ──
+    try:
+        action, orig_chat, orig_mid = data.split(":")
+    except Exception:
+        requests.post(f"{API}/answerCallbackQuery", json={"callback_query_id": cb_id})
+        return
+
     if action == "approve":
         requests.post(f"{API}/copyMessage", json={
             "chat_id": CHANNEL_ID,

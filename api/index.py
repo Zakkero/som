@@ -1,60 +1,50 @@
-#тестовый код
 from http.server import BaseHTTPRequestHandler
 import json
 import os
 import requests
 
-# Читаем переменные
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-ADMIN_ID = os.environ.get("ADMIN_ID")
+# .strip() автоматически удалит случайные пробелы в начале и конце
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+ADMIN_ID = os.environ.get("ADMIN_ID", "").strip()
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        
         try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
             data = json.loads(body)
-        except Exception:
+
+            if "message" in data:
+                msg = data["message"]
+                chat_id = msg["chat"]["id"]
+                user_id = str(msg["from"]["id"])
+                text = msg.get("text", "[нет текста]")
+
+                is_admin = "✅ ДА" if user_id == ADMIN_ID else "❌ НЕТ"
+                token_ok = "✅ ЕСТЬ" if BOT_TOKEN else "❌ НЕТ"
+
+                debug_text = (
+                    f"🔍 *ДИАГНОСТИКА*\n\n"
+                    f"🆔 Твой ID: `{user_id}`\n"
+                    f"⚙️ ADMIN_ID в настройках: `{ADMIN_ID}`\n"
+                    f"👑 Ты админ: {is_admin}\n"
+                    f"🔑 Токен: {token_ok}\n\n"
+                    f"💬 Твой текст: `{text}`"
+                )
+
+                url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                requests.post(url, json={
+                    "chat_id": chat_id, 
+                    "text": debug_text, 
+                    "parse_mode": "Markdown"
+                })
+
             self._respond(200)
-            return
-
-        # Если это сообщение
-        if "message" in data:
-            msg = data["message"]
-            chat_id = msg["chat"]["id"]
-            user_id = msg["from"]["id"]
-            user_name = msg["from"].get("first_name", "Неизвестно")
-            text = msg.get("text", "[нет текста]")
-
-            # Формируем диагностическое сообщение
-            token_status = "✅ ЕСТЬ" if BOT_TOKEN else "❌ ОТСУТСТВУЕТ"
-            is_admin = "✅ ДА" if str(user_id) == str(ADMIN_ID) else "❌ НЕТ"
-
-            debug_text = (
-                f"🔍 *ДИАГНОСТИКА БОТА*\n\n"
-                f"👤 Твоё имя: {user_name}\n"
-                f"🆔 Твой ID: `{user_id}`\n"
-                f"💬 Твой текст: `{text}`\n\n"
-                f"⚙️ *Статус настроек:*\n"
-                f"• BOT_TOKEN: {token_status}\n"
-                f"• ADMIN_ID в настройках: `{ADMIN_ID}`\n"
-                f"• Ты являешься админом для бота: {is_admin}"
-            )
-
-            # Пытаемся отправить ответ
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            response = requests.post(url, json={
-                "chat_id": chat_id,
-                "text": debug_text,
-                "parse_mode": "Markdown"
-            })
             
-            # Если отправка не удалась, запишем это в логи Vercel
-            if response.status_code != 200:
-                print(f"TELEGRAM API ERROR: {response.text}")
-
-        self._respond(200)
+        except Exception as e:
+            # Если что-то пошло не так, мы запишем это в логи Vercel, а не упадём с 500
+            print(f"PYTHON ERROR: {str(e)}")
+            self._respond(500)
 
     def do_GET(self):
         self.send_response(200)

@@ -17,7 +17,10 @@ TZ = timezone(timedelta(hours=3))
 # ─── Подключение к Vercel KV ───
 try:
     from upstash_redis import Redis
-    redis = Redis.from_env()
+    redis = Redis(
+        url=os.environ.get("KV_REST_API_URL"),
+        token=os.environ.get("KV_REST_API_TOKEN")
+    )
 except Exception as e:
     print(f"KV connection error: {e}")
     redis = None
@@ -161,7 +164,6 @@ def _handle_message(msg):
         # Список админов
         if text == "/list_admins":
             admins = get_admins()
-            main_mark = " 👑" if str(MAIN_ADMIN_ID) in admins else ""
             admin_list = "\n".join([f"• `{a}`" + (" 👑" if a == str(MAIN_ADMIN_ID) else "") for a in admins])
             _send_msg(chat_id, f"👥 *Список админов:*\n\n{admin_list}\n\n👑 — главный админ")
             return

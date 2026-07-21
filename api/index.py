@@ -1,60 +1,52 @@
-from http.server import BaseHTTPRequestHandler
 import json
 import os
-import requests
+import sys
 
-# .strip() автоматически удалит случайные пробелы в начале и конце
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-ADMIN_ID = os.environ.get("ADMIN_ID", "").strip()
+class handler:
+    def __init__(self, req, res):
+        self.req = req
+        self.res = res
 
-class handler(BaseHTTPRequestHandler):
-    def do_POST(self):
+    def GET(self):
+        self.res.status(200)
+        self.res.send("Bot is alive! Send me a message in Telegram.")
+
+    def POST(self):
         try:
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length)
+            # Читаем тело запроса от Telegram
+            body = self.req.body
+            if isinstance(body, bytes):
+                body = body.decode('utf-8')
+            
+            if not body:
+                self.res.status(200)
+                self.res.send("OK")
+                return
+
             data = json.loads(body)
-
+            
+            # Если пришло сообщение, логируем его и переменные
             if "message" in data:
-                msg = data["message"]
-                chat_id = msg["chat"]["id"]
-                user_id = str(msg["from"]["id"])
-                text = msg.get("text", "[нет текста]")
+                chat_id = data["message"]["chat"]["id"]
+                user_id = data["message"]["from"]["id"]
+                
+                # Записываем успешный приём в логи Vercel
+                print(f"✅ SUCCESS: Received message from user {user_id} in chat {chat_id}", file=sys.stderr)
+                
+                # Проверяем, видит ли Vercel наши переменные
+                token = os.environ.get("BOT_TOKEN", "MISSING")
+                admin = os.environ.get("ADMIN_ID", "MISSING")
+                
+                # Показываем в логах начало токена (для безопасности не показываем весь) и ID
+                token_preview = token[:15] + "..." if token != "MISSING" else "NONE"
+                print(f"🔍 DEBUG VARS: Token={token_preview}, Admin={admin}", file=sys.stderr)
 
-                is_admin = "✅ ДА" if user_id == ADMIN_ID else "❌ НЕТ"
-                token_ok = "✅ ЕСТЬ" if BOT_TOKEN else "❌ НЕТ"
-
-                debug_text = (
-                    f"🔍 *ДИАГНОСТИКА*\n\n"
-                    f"🆔 Твой ID: `{user_id}`\n"
-                    f"⚙️ ADMIN_ID в настройках: `{ADMIN_ID}`\n"
-                    f"👑 Ты админ: {is_admin}\n"
-                    f"🔑 Токен: {token_ok}\n\n"
-                    f"💬 Твой текст: `{text}`"
-                )
-
-                url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-                requests.post(url, json={
-                    "chat_id": chat_id, 
-                    "text": debug_text, 
-                    "parse_mode": "Markdown"
-                })
-
-            self._respond(200)
+            # Всегда возвращаем 200 OK, чтобы Telegram не думал, что произошла ошибка
+            self.res.status(200)
+            self.res.send("OK")
             
         except Exception as e:
-            # Если что-то пошло не так, мы запишем это в логи Vercel, а не упадём с 500
-            print(f"PYTHON ERROR: {str(e)}")
-            self._respond(500)
-
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive! Send me a message in Telegram.")
-
-    def _respond(self, code):
-        self.send_response(code)
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def log_message(self, format, *args):
-        pass
+            # Если всё-таки произошла ошибка, мы запишем её в логи, но всё равно вернём 200
+            print(f"❌ PYTHON EXCEPTION: {str(e)}", file=sys.stderr)
+            self.res.status(200)
+            self.res.send("OK")

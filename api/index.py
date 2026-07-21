@@ -1,3 +1,4 @@
+#тестовый код
 from http.server import BaseHTTPRequestHandler
 import json
 import os

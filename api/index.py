@@ -133,6 +133,163 @@ def get_stats():
         "banned": int(kv_get("stats_banned") or 0),
     }
 
+def get_user_posts(user_id):
+    return int(kv_get(f"posts_{user_id}") or 0)
+
+def inc_user_posts(user_id):
+    current = get_user_posts(user_id)
+    kv_set(f"posts_{user_id}", str(current + 1))
+    return current + 1
+
+
+# ═══════════════════════════════════════════════════
+#  СЕРИЯ ПОСТОВ (без отклонений)
+# ═══════════════════════════════════════════════════
+def get_streak(user_id):
+    return int(kv_get(f"streak_{user_id}") or 0)
+
+def inc_streak(user_id):
+    current = get_streak(user_id)
+    new_streak = current + 1
+    kv_set(f"streak_{user_id}", str(new_streak))
+    # Обновляем максимум
+    max_streak = int(kv_get(f"max_streak_{user_id}") or 0)
+    if new_streak > max_streak:
+        kv_set(f"max_streak_{user_id}", str(new_streak))
+    return new_streak
+
+def reset_streak(user_id):
+    kv_set(f"streak_{user_id}", "0")
+
+
+# ═══════════════════════════════════════════════════
+#  ПОСТЫ ЗА СЕГОДНЯ
+# ═══════════════════════════════════════════════════
+def get_today_posts(user_id):
+    today = datetime.now(TZ).strftime("%Y%m%d")
+    return int(kv_get(f"posts_{user_id}_{today}") or 0)
+
+def inc_today_posts(user_id):
+    today = datetime.now(TZ).strftime("%Y%m%d")
+    current = int(kv_get(f"posts_{user_id}_{today}") or 0)
+    kv_set(f"posts_{user_id}_{today}", str(current + 1))
+    return current + 1
+
+
+# ═══════════════════════════════════════════════════
+#  МЕДИА-ТИПЫ (для ачивки "Творец")
+# ═══════════════════════════════════════════════════
+def mark_media_used(user_id, media_type):
+    types = kv_get(f"media_{user_id}") or ""
+    type_list = types.split(",") if types else []
+    if media_type not in type_list:
+        type_list.append(media_type)
+        kv_set(f"media_{user_id}", ",".join(type_list))
+
+def has_used_media(user_id):
+    types = kv_get(f"media_{user_id}") or ""
+    return bool(types.strip())
+
+
+# ═══════════════════════════════════════════════════
+#  АЧИВКИ 🏆
+# ═══════════════════════════════════════════════════
+ACHIEVEMENTS = {
+    "first_post":      {"emoji": "🌱", "name": "Первый пост",       "desc": "Первое одобренное сообщение"},
+    "active":          {"emoji": "🔥", "name": "Активный",          "desc": "10 одобренных постов"},
+    "legend":          {"emoji": "💎", "name": "Легенда",           "desc": "50 одобренных постов"},
+    "veteran":         {"emoji": "📚", "name": "Ветеран",           "desc": "100 одобренных постов"},
+    "rising_star":     {"emoji": "⭐", "name": "Восходящая звезда", "desc": "Рейтинг 7"},
+    "master":          {"emoji": "🌟", "name": "Мастер",            "desc": "Рейтинг 9"},
+    "king":            {"emoji": "👑", "name": "Король канала",     "desc": "Рейтинг 10"},
+    "sniper":          {"emoji": "🎯", "name": "Снайпер",           "desc": "5 постов подряд без отклонений"},
+    "archer":          {"emoji": "🏹", "name": "Лучник",            "desc": "10 постов подряд без отклонений"},
+    "sniper_master":   {"emoji": "🎖", "name": "Снайпер-мастер",    "desc": "20 постов подряд без отклонений"},
+    "fast_start":      {"emoji": "⚡", "name": "Быстрый старт",     "desc": "3 поста за один день"},
+    "rocket":          {"emoji": "🚀", "name": "Ракета",            "desc": "5 постов за один день"},
+    "hurricane":       {"emoji": "🌪", "name": "Ураган",            "desc": "10 постов за один день"},
+    "creator":         {"emoji": "🎨", "name": "Творец",            "desc": "Отправил медиа-контент"},
+    "writer":          {"emoji": "✍️", "name": "Писатель",          "desc": "Пост длиннее 500 символов"},
+    "novelist":        {"emoji": "📖", "name": "Романист",          "desc": "Пост длиннее 2000 символов"},
+    "chosen":          {"emoji": "⭐", "name": "Избранный",         "desc": "Добавлен в белый список"},
+    "rebirth":         {"emoji": "🔄", "name": "Возрождение",       "desc": "Опубликован пост после отклонения"},
+}
+
+
+def get_achievements(user_id):
+    data = kv_get(f"ach_{user_id}")
+    return [x.strip() for x in data.split(",") if x.strip()] if data else []
+
+def has_achievement(user_id, ach_id):
+    return ach_id in get_achievements(user_id)
+
+def grant_achievement(user_id, ach_id):
+    """Выдаёт ачивку и уведомляет пользователя. Возвращает True, если ачивка новая."""
+    if has_achievement(user_id, ach_id):
+        return False
+    achs = get_achievements(user_id)
+    achs.append(ach_id)
+    kv_set(f"ach_{user_id}", ",".join(achs))
+    
+    # Уведомляем пользователя
+    ach = ACHIEVEMENTS.get(ach_id, {})
+    emoji = ach.get("emoji", "🏆")
+    name = ach.get("name", "Достижение")
+    desc = ach.get("desc", "")
+    total = len(achs)
+    
+    _notify_user(int(user_id),
+        f"🏆 <b>Новая ачивка!</b>\n\n"
+        f"{emoji} <b>{name}</b>\n"
+        f"<i>{desc}</i>\n\n"
+        f"📊 Всего ачивок: <b>{total}/{len(ACHIEVEMENTS)}</b>\n"
+        f"Посмотреть все: <code>/achievements</code>"
+    )
+    return True
+
+
+def check_achievements(user_id):
+    """Проверяет и выдаёт все доступные ачивки"""
+    posts = get_user_posts(user_id)
+    rating = get_rating(user_id)
+    streak = get_streak(user_id)
+    today_posts = get_today_posts(user_id)
+    has_media = has_used_media(user_id)
+    
+    # По количеству постов
+    if posts >= 1:   grant_achievement(user_id, "first_post")
+    if posts >= 10:  grant_achievement(user_id, "active")
+    if posts >= 50:  grant_achievement(user_id, "legend")
+    if posts >= 100: grant_achievement(user_id, "veteran")
+    
+    # По рейтингу
+    if rating >= 7:  grant_achievement(user_id, "rising_star")
+    if rating >= 9:  grant_achievement(user_id, "master")
+    if rating >= 10: grant_achievement(user_id, "king")
+    
+    # По серии
+    if streak >= 5:  grant_achievement(user_id, "sniper")
+    if streak >= 10: grant_achievement(user_id, "archer")
+    if streak >= 20: grant_achievement(user_id, "sniper_master")
+    
+    # По постам за день
+    if today_posts >= 3:  grant_achievement(user_id, "fast_start")
+    if today_posts >= 5:  grant_achievement(user_id, "rocket")
+    if today_posts >= 10: grant_achievement(user_id, "hurricane")
+    
+    # По медиа
+    if has_media: grant_achievement(user_id, "creator")
+    
+    # В белом списке
+    if is_whitelisted(user_id): grant_achievement(user_id, "chosen")
+
+
+def check_text_achievements(user_id, text):
+    """Проверяет ачивки, связанные с текстом"""
+    length = len(text)
+    if length >= 500:  grant_achievement(user_id, "writer")
+    if length >= 2000: grant_achievement(user_id, "novelist")
+
 
 # ═══════════════════════════════════════════════════
 #  ЛОГИ
@@ -273,11 +430,33 @@ def _handle_message(msg):
         _handle_admin_command(chat_id, user_id, text)
         return
 
-    # Пользовательские команды
+    # ── Пользовательские команды ──
     if text == "/myrating":
         rating = get_rating(user_id)
         stars = "⭐" * rating + "☆" * (10 - rating)
         _send_msg(chat_id, f"👤 <b>Ваш рейтинг:</b>\n\n{stars} ({rating}/10)\n\nЧем выше рейтинг, тем быстрее ваши сообщения публикуются!")
+        return
+
+    if text == "/achievements":
+        achs = get_achievements(user_id)
+        total = len(ACHIEVEMENTS)
+        if not achs:
+            _send_msg(chat_id,
+                f"🏆 <b>Ваши ачивки</b>\n\n"
+                f"Пока у вас нет ачивок.\n\n"
+                f"💡 Отправляйте посты, получайте одобрения и повышайте рейтинг, чтобы открыть достижения!\n\n"
+                f"📊 Прогресс: <b>0/{total}</b>"
+            )
+        else:
+            ach_lines = []
+            for ach_id in achs:
+                ach = ACHIEVEMENTS.get(ach_id, {})
+                ach_lines.append(f"{ach.get('emoji', '🏆')} <b>{ach.get('name', '?')}</b> — <i>{ach.get('desc', '')}</i>")
+            _send_msg(chat_id,
+                f"🏆 <b>Ваши ачивки</b>\n\n"
+                + "\n".join(ach_lines) +
+                f"\n\n📊 Прогресс: <b>{len(achs)}/{total}</b>"
+            )
         return
 
     if text == "/info":
@@ -285,12 +464,35 @@ def _handle_message(msg):
         stars = "⭐" * rating
         subscribed = "✅ Да" if is_subscribed(user_id) else "❌ Нет"
         in_wl = "✅ Да" if is_whitelisted(user_id) else "❌ Нет"
+        posts = get_user_posts(user_id)
+        streak = get_streak(user_id)
+        achs = len(get_achievements(user_id))
         _send_msg(chat_id,
-            f"📊 <b>Ваша информация</b>\n\n"
+            f"📊 <b>Ваш профиль</b>\n\n"
             f"⭐ Рейтинг: {stars} ({rating}/10)\n"
-            f"📢 Подписан на канал: {subscribed}\n"
-            f"⭐ В белом списке: {in_wl}\n\n"
-            f"💡 Совет: чем выше рейтинг, тем быстрее публикуются ваши сообщения!"
+            f"📨 Одобрено постов: <b>{posts}</b>\n"
+            f"🎯 Текущая серия: <b>{streak}</b>\n"
+            f"🏆 Ачивок: <b>{achs}/{len(ACHIEVEMENTS)}</b>\n"
+            f"📢 Подписан: {subscribed}\n"
+            f"⭐ В БС: {in_wl}\n\n"
+            f"💡 Команды: <code>/achievements</code>, <code>/myrating</code>"
+        )
+        return
+
+    if text == "/start" or text == "/help":
+        rating = get_rating(user_id)
+        posts = get_user_posts(user_id)
+        _send_msg(chat_id,
+            f"👋 <b>Добро пожаловать!</b>\n\n"
+            f"Отправь нам свою историю, и мы опубликуем её анонимно.\n\n"
+            f"📊 <b>Ваш прогресс:</b>\n"
+            f"⭐ Рейтинг: {rating}/10\n"
+            f"📨 Одобрено: {posts}\n"
+            f"🏆 Ачивок: {len(get_achievements(user_id))}/{len(ACHIEVEMENTS)}\n\n"
+            f"<b>Команды:</b>\n"
+            f"<code>/info</code> — ваш профиль\n"
+            f"<code>/achievements</code> — ачивки\n"
+            f"<code>/myrating</code> — рейтинг"
         )
         return
 
@@ -335,7 +537,16 @@ def _handle_admin_command(chat_id, user_id, text):
             return
         rating = get_rating(target)
         stars = "⭐" * rating + "☆" * (10 - rating)
-        _send_msg(chat_id, f"👤 Рейтинг <code>{target}</code>:\n\n{stars} ({rating}/10)")
+        posts = get_user_posts(target)
+        streak = get_streak(target)
+        achs = len(get_achievements(target))
+        _send_msg(chat_id,
+            f"👤 <b>Профиль <code>{target}</code>:</b>\n\n"
+            f"⭐ Рейтинг: {stars} ({rating}/10)\n"
+            f"📨 Одобрено: {posts}\n"
+            f"🎯 Серия: {streak}\n"
+            f"🏆 Ачивок: {achs}/{len(ACHIEVEMENTS)}"
+        )
         return
 
     if text.startswith("/rate "):
@@ -351,6 +562,7 @@ def _handle_admin_command(chat_id, user_id, text):
         new_rating = change_rating(target, delta)
         stars = "⭐" * new_rating + "☆" * (10 - new_rating)
         add_log("RATE", user_id, f"{target} {delta_str} → {new_rating}")
+        check_achievements(target)
         _send_msg(chat_id, f"✅ Рейтинг <code>{target}</code>:\n\n{stars} ({new_rating}/10)")
         return
 
@@ -365,7 +577,21 @@ def _handle_admin_command(chat_id, user_id, text):
         rating = get_rating(target)
         stars = "⭐" * rating
         admin = "👑 Админ" if target in ADMINS else "— Пользователь"
-        _send_msg(chat_id, f"🔍 <b>Проверка <code>{target}</code>:</b>\n\n• Статус: {admin}\n• ЧС: {banned}\n• БС: {wl}\n• Подписка: {member}\n• Рейтинг: {stars} ({rating}/10)")
+        posts = get_user_posts(target)
+        streak = get_streak(target)
+        achs = get_achievements(target)
+        ach_list = ", ".join([ACHIEVEMENTS.get(a, {}).get("emoji", "") for a in achs]) if achs else "—"
+        _send_msg(chat_id,
+            f"🔍 <b>Проверка <code>{target}</code>:</b>\n\n"
+            f"• Статус: {admin}\n"
+            f"• ЧС: {banned}\n"
+            f"• БС: {wl}\n"
+            f"• Подписка: {member}\n"
+            f"• Рейтинг: {stars} ({rating}/10)\n"
+            f"• Постов: {posts}\n"
+            f"• Серия: {streak}\n"
+            f"• Ачивки: {ach_list}"
+        )
         return
 
     if text.startswith("/ban "):
@@ -412,6 +638,7 @@ def _handle_admin_command(chat_id, user_id, text):
             return
         if add_to_whitelist(target):
             add_log("ADD_WL", user_id, target)
+            check_achievements(target)
             _send_msg(chat_id, f"⭐ <code>{target}</code> в БС.")
         else:
             _send_msg(chat_id, f"⚠️ Уже в БС.")
@@ -492,10 +719,29 @@ def _handle_user_message(msg):
     media_info = f"\n{get_media_emoji(media_type)}" if media_type else ""
     status_line = f"🏷 <b>Статус:</b> Подписчик | ⭐ Рейтинг: {rating}/10\n"
     
+    # Проверяем ачивки, связанные с текстом и медиа
+    if msg_text:
+        check_text_achievements(user_id, msg_text)
+    if media_type:
+        mark_media_used(user_id, media_type)
+        grant_achievement(user_id, "creator")
+    
     if should_auto:
         copy_resp = requests.post(f"{API}/copyMessage", json={"chat_id": CHANNEL_ID, "from_chat_id": chat_id, "message_id": msg["message_id"]}, timeout=10)
         if copy_resp.status_code == 200:
             inc_stat("stats_approved")
+            new_posts = inc_user_posts(user_id)
+            inc_today_posts(user_id)
+            new_streak = inc_streak(user_id)
+            
+            # Проверяем ачивку "Возрождение"
+            if kv_get(f"rejected_{user_id}") == "true":
+                grant_achievement(user_id, "rebirth")
+                kv_set(f"rejected_{user_id}", "false")
+            
+            # Проверяем все ачивки
+            check_achievements(user_id)
+            
             _notify_user(chat_id, "✅ <b>Ваше сообщение опубликовано!</b>\n\nСпасибо! 🎉\n\n" + (f"👉 <a href=\"https://t.me/{CHANNEL_USERNAME.lstrip('@')}\">Перейти в канал</a>" if CHANNEL_USERNAME else ""))
             reason = "⭐ БС" if in_whitelist else ("🔥 Рейтинг" if rating >= RATING_AUTO_THRESHOLD else "✅ Авто")
             admin_text = f"{reason}: Опубликовано.\n\n👤 {safe_name} (@{safe_uname}){media_info}\n💬 {safe_text}"
@@ -550,6 +796,7 @@ def _handle_callback(cb):
         target_id = data.split(":")[1]
         if add_to_whitelist(target_id):
             add_log("ADD_WL", user_id, target_id)
+            check_achievements(target_id)
             status_text = f"\n\n⭐ <b>Автор в БС!</b>"
         else:
             status_text = f"\n\n⚠️ <b>Уже в БС.</b>"
@@ -563,6 +810,7 @@ def _handle_callback(cb):
         delta = 1 if data.startswith("rate_up:") else -1
         new_rating = change_rating(target_id, delta)
         add_log("RATE", user_id, f"{target_id} {'+' if delta > 0 else ''}{delta} → {new_rating}")
+        check_achievements(target_id)
         status_text = f"\n\n⭐ <b>Рейтинг: {new_rating}/10</b>"
         safe_original = escape(admin_msg.get("text") or admin_msg.get("caption") or "")
         requests.post(f"{API}/editMessageCaption" if get_media_type(admin_msg) else f"{API}/editMessageText", json={"chat_id": admin_chat, "message_id": admin_mid, "text" if not get_media_type(admin_msg) else "caption": safe_original + status_text, "parse_mode": "HTML"})
@@ -579,7 +827,18 @@ def _handle_callback(cb):
         copy_resp = requests.post(f"{API}/copyMessage", json={"chat_id": CHANNEL_ID, "from_chat_id": int(orig_chat), "message_id": int(orig_mid)}, timeout=10)
         if copy_resp.status_code == 200:
             inc_stat("stats_approved")
+            inc_user_posts(int(orig_chat))
+            inc_today_posts(int(orig_chat))
+            inc_streak(int(orig_chat))
             change_rating(int(orig_chat), 1)
+            
+            # Проверяем ачивку "Возрождение"
+            if kv_get(f"rejected_{orig_chat}") == "true":
+                grant_achievement(int(orig_chat), "rebirth")
+                kv_set(f"rejected_{orig_chat}", "false")
+            
+            check_achievements(int(orig_chat))
+            
             status_text = "\n\n✅ <b>Опубликовано</b>"
             _notify_user(int(orig_chat), "✅ <b>Ваше сообщение опубликовано!</b>\n\nСпасибо! 🎉\n\n" + (f"👉 <a href=\"https://t.me/{CHANNEL_USERNAME.lstrip('@')}\">Перейти в канал</a>" if CHANNEL_USERNAME else ""))
             add_log("APPROVE", user_id, f"{orig_chat}:{orig_mid}")
@@ -588,6 +847,8 @@ def _handle_callback(cb):
     elif action == "reject":
         inc_stat("stats_rejected")
         change_rating(int(orig_chat), -1)
+        reset_streak(int(orig_chat))
+        kv_set(f"rejected_{orig_chat}", "true")  # Помечаем для ачивки "Возрождение"
         status_text = "\n\n❌ <b>Отклонено</b>"
         _notify_user(int(orig_chat), "❌ <b>Ваше сообщение отклонено</b>\n\nПопробуйте другое! ✨")
         add_log("REJECT", user_id, f"{orig_chat}:{orig_mid}")
